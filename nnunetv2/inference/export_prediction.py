@@ -11,7 +11,38 @@ from nnunetv2.configuration import default_num_processes
 from nnunetv2.utilities.label_handling.label_handling import LabelManager
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager, ConfigurationManager
 
+# anissa 2 extra functions:
+import cc3d
 
+def con_comp(seg_array):
+    # input: a binary segmentation array output: an array with seperated (indexed) connected components of the segmentation array
+    connectivity = 18
+    conn_comp = cc3d.connected_components(seg_array, connectivity=connectivity)
+    return conn_comp
+
+def process_array(arr,min_size):
+    '''
+    arr: numpy image array
+    returns: processed numpy array
+    '''
+    min_size = int(min_size)
+
+    pred_conn_comp = con_comp(arr) # do connected comopnent analysis fo array
+    unique_elements, counts = np.unique(pred_conn_comp, return_counts=True)
+    # Create a mapping to change values less than 10 to 0
+    change_to_zero = unique_elements[counts < min_size]
+
+    processed_arr = pred_conn_comp.copy()
+
+    # Change values less than 10 to 0
+    for val in change_to_zero:
+        processed_arr[processed_arr == val] = 0
+    
+    # put all non-0 values back to 1 (all tumour)
+    processed_arr[processed_arr != 0] = 1
+
+    return processed_arr
+  
 def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits: Union[torch.Tensor, np.ndarray],
                                                                 plans_manager: PlansManager,
                                                                 configuration_manager: ConfigurationManager,
@@ -40,13 +71,18 @@ def convert_predicted_logits_to_segmentation_with_correct_shape(predicted_logits
     # segmentation may be torch.Tensor but we continue with numpy
     if isinstance(segmentation, torch.Tensor):
         segmentation = segmentation.cpu().numpy()
+    
+    # anissa code:
+    print('doing post-processing')      
+    pp_segmentation = process_array(segmentation,10)                                                                 
+    print('post-processing successful')                                                             
 
     # put segmentation in bbox (revert cropping)
     segmentation_reverted_cropping = np.zeros(properties_dict['shape_before_cropping'],
                                               dtype=np.uint8 if len(label_manager.foreground_labels) < 255 else np.uint16)
     slicer = bounding_box_to_slice(properties_dict['bbox_used_for_cropping'])
-    segmentation_reverted_cropping[slicer] = segmentation
-    del segmentation
+    segmentation_reverted_cropping[slicer] = pp_segmentation
+    del segmentation, pp_segmentation
 
     # revert transpose
     segmentation_reverted_cropping = segmentation_reverted_cropping.transpose(plans_manager.transpose_backward)
